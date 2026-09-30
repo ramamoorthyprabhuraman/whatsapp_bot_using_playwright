@@ -1,111 +1,112 @@
-from playwright.sync_api import sync_playwright
 from datetime import datetime
+from playwright.sync_api import sync_playwright
 
+USER_DATA_DIR = "./whatsapp_user_data"
 
-print("Starting the Playwright script...")
+print("Starting the Playwright script on Windows...")
 print(f"Current date and time: {datetime.now()}")
 
-# WhatsApp Message Sender
-
-# Chromium--> WhatsApp Web --> Login / QR scan --> Search "Priya"
-# Open Priya chat --> Send message --> Screenshot --> Close browser
-
-
 with sync_playwright() as p:
+    # 1. Launch persistent context (Windows Chromium)
+    context = p.chromium.launch_persistent_context(
+        user_data_dir=USER_DATA_DIR,
+        headless=False,
+        no_viewport=True,
+        args=["--start-maximized"],
+    )
 
-    # 1. Launch Chromium
-    
-    browser = p.chromium.launch(headless=False)
+    page = context.pages[0] if context.pages else context.new_page()
 
-    page = browser.new_page()
-
-    print("Chromium opened.")
-    
     # 2. Open WhatsApp Web
+    print("Opening WhatsApp Web...")
+    page.goto("https://web.whatsapp.com")
 
-    page.goto("https://web.whatsapp.com",wait_until="domcontentloaded")
+    # 3. Wait for chat list pane to mount
+    print("Waiting for WhatsApp UI to load...")
+    page.locator("#pane-side").wait_for(state="attached", timeout=60000)
+    print("WhatsApp interface loaded successfully.")
 
-    print("WhatsApp Web opened.")
+    # 4. Dismiss any 'What's new' / sync banners
+    try:
+        modal_btn = page.locator(
+            'div[role="dialog"] button:has-text("OK"), '
+            'div[role="dialog"] button:has-text("Got it"), '
+            'div[role="dialog"] button:has-text("Continue"), '
+            'div[role="dialog"] [aria-label="Close"]'
+        )
+        if modal_btn.is_visible(timeout=2000):
+            modal_btn.click()
+            print("Dismissed modal popup.")
+    except Exception:
+        pass
 
-    page.screenshot(path="whatsapp_web.png")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(1000)
 
+    # 5. Activate & focus the Search Bar
+    # In current WhatsApp Web, the search container is a button/box that activates upon click
+    print("Activating search box...")
+    search_trigger = page.locator(
+        'button[aria-label*="Search"], '
+        'div[aria-label*="Search"], '
+        '#side [role="button"], '
+        '#side [role="textbox"], '
+        '#side [contenteditable="true"]'
+    ).first
 
-    # 3. Wait for WhatsApp login
-    
+    search_trigger.click()
+    page.wait_for_timeout(500)
 
-    # On the first run, scan the QR code manually.
-    # Once the Search box appears, login is complete.
+    # Windows native WhatsApp shortcut to guarantee focus
+    page.keyboard.press("Control+Alt+/")
+    page.wait_for_timeout(500)
 
+    # Clear any leftover query and type Priya
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Backspace")
+    page.keyboard.type("Priya", delay=40)
+    print("Typed 'Priya' into search.")
 
-    print("\nPlease scan the QR code if it is displayed...")
-
-    page.wait_for_selector('input[placeholder="Search or start new chat"]',state="visible")
-
-    print("WhatsApp login successful.")
-
-    # 4. Search for Priya
-
-    search_box = page.get_by_placeholder("Search or start new chat")
-
-    search_box.click()
-
-    search_box.fill("Priya")
-
-    print("Searching for Priya...")
-
-    # Wait for search results
-    page.wait_for_timeout(3000)
-
-
-    # 5. Select Priya
-
-    priya = page.get_by_text("Priya",exact=True).first
-
-    priya.wait_for(state="visible",timeout=30000)
-
-    priya.click()
-
-    print("Priya's chat opened.")
-
+    # 6. Wait for search results and open Priya's chat
     page.wait_for_timeout(2000)
 
-    # 6. Send message
-   
+    priya_contact = page.locator(
+        '#pane-side span[title="Priya"], '
+        '#pane-side span:text-is("Priya"), '
+        'span[title="Priya"]'
+    ).first
 
-    message = ("Hello Priya," "this is a test message sent using Playwright!")
+    if priya_contact.is_visible(timeout=2000):
+        priya_contact.click()
+        print("Clicked on Priya from search results.")
+    else:
+        # If the search results pane auto-highlights the first match, press Enter to open
+        print("Opening top match via Enter...")
+        page.keyboard.press("Enter")
 
-    message_box = page.get_by_placeholder("Type a message")
+    # 7. Locate Message Box & Send text
+    print("Waiting for chat input box...")
+    # The active message box is the last visible contenteditable area in footer/main
+    message_input = page.locator(
+        'footer div[contenteditable="true"], '
+        'div[role="textbox"][aria-label*="Type a message"], '
+        'div[role="textbox"][data-tab="10"]'
+    ).last
 
-    message_box.wait_for(state="visible",timeout=30000)
+    message_input.wait_for(state="visible", timeout=10000)
+    message_input.click()
 
-    message_box.click()
+    message = "Hello Priya, this is a test message sent using Playwright!"
+    page.keyboard.type(message, delay=15)
+    page.keyboard.press("Enter")
+    print(f"Message sent: {message}")
 
-    message_box.fill(message)
-
-    print(f"Sending message: {message}")
-
+    # Allow 2 seconds for delivery ticks to render before screenshot
     page.wait_for_timeout(2000)
 
-    # Press Enter to send
-    message_box.press("Enter")
-
-
-    page.wait_for_timeout(3000)
-
-    print("Message sent successfully.")
-
-
-    # 7. Screenshot
-
-
+    # 8. Screenshot & Exit
     page.screenshot(path="message_sent_to_Priya.png")
+    print("Screenshot saved as message_sent_to_Priya.png")
 
-    print("Screenshot saved as " "message_sent_to_Priya.png")
-
-
-    # 8. Close browser
-
-    browser.close()
-
-    print("Browser closed.")
-    print("Script completed successfully.")
+    context.close()
+    print("Browser closed. Script completed successfully.")
